@@ -306,8 +306,18 @@ func (c *compositeClientset) startHeartbeat() {
 }
 
 func (c *compositeClientset) waitForConn(ctx context.Context) error {
+	// How long to keep retrying the initial connection before giving up is
+	// configurable so the agent does not terminate too soon during a
+	// control-plane / API server outage. Fall back to the built-in default
+	// when unset. The effective wait is still bounded by ctx (the hive
+	// start-hook timeout).
+	connRetryTimeout := connTimeout
+	if c.config.K8sClientConnectionRetryTimeout > 0 {
+		connRetryTimeout = c.config.K8sClientConnectionRetryTimeout
+	}
+
 	stop := make(chan struct{})
-	timeout := time.NewTimer(connTimeout)
+	timeout := time.NewTimer(connRetryTimeout)
 	defer timeout.Stop()
 	var err error
 	wait.Until(func() {

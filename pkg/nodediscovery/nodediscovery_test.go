@@ -21,6 +21,7 @@ import (
 	"github.com/cilium/cilium/pkg/node"
 	nodeTypes "github.com/cilium/cilium/pkg/node/types"
 	"github.com/cilium/cilium/pkg/option"
+	"github.com/cilium/cilium/pkg/time"
 	cnitypes "github.com/cilium/cilium/plugins/cilium-cni/types"
 )
 
@@ -96,4 +97,67 @@ func TestUpdateCiliumNodeResourceTransientErrorCausesFatal(t *testing.T) {
 
 	require.Equal(t, maxRetryCount, updateCalls,
 		"transient errors should be retried %d times, not fataled immediately", maxRetryCount)
+}
+
+// TestUpdateCiliumNodeResourceConfigurableRetries verifies that the number of
+// CiliumNode update attempts before the agent gives up and exits is driven by
+// the configurable CiliumNodeUpdateMaxRetries, so operators can tune how long
+// the agent tolerates an API server outage instead of being fixed at the
+// compiled-in default.
+func TestUpdateCiliumNodeResourceConfigurableRetries(t *testing.T) {
+	option.Config.AutoCreateCiliumNodeResource = true
+	option.Config.IPAM = ""
+	t.Cleanup(func() {
+		option.Config.AutoCreateCiliumNodeResource = false
+	})
+
+	const nodeName = "test-node"
+	nodeTypes.SetName(nodeName)
+
+	// Cover values both below and above the default (maxRetryCount == 10) to
+	// show the retry budget is honored in either direction.
+	for _, maxRetries := range []int{1, 3, 15} {
+		t.Run(fmt.Sprintf("maxRetries=%d", maxRetries), func(t *testing.T) {
+			logging.RegisterExitHandler(func() { panic("fatal called") })
+			t.Cleanup(func() { logging.RegisterExitHandler(func() {}) })
+
+			fakeClient, _ := clienttestutils.NewFakeClientset(hivetest.Logger(t))
+
+			existingNode := &ciliumv2.CiliumNode{
+				ObjectMeta: metav1.ObjectMeta{Name: nodeName},
+			}
+			require.NoError(t, fakeClient.CiliumFakeClientset.Tracker().Add(existingNode))
+
+			updateCalls := 0
+			fakeClient.CiliumFakeClientset.PrependReactor("update", "ciliumnodes",
+				func(_ k8stesting.Action) (bool, runtime.Object, error) {
+					updateCalls++
+					return true, nil, fmt.Errorf("connection reset by peer")
+				},
+			)
+
+			nd := &NodeDiscovery{
+				logger:           hivetest.Logger(t),
+				clientset:        fakeClient,
+				k8sGetters:       &mockK8sGetters{ciliumNode: existingNode},
+				cniConfigManager: &mockCNIConfigManager{},
+				config: config{
+					CiliumNodeUpdateMaxRetries:   maxRetries,
+					CiliumNodeUpdateRetryBackoff: time.Millisecond,
+				},
+			}
+
+			ln := &node.LocalNode{
+				Node:  nodeTypes.Node{Name: nodeName},
+				Local: &node.LocalNodeInfo{},
+			}
+
+			require.Panics(t, func() {
+				nd.updateCiliumNodeResource(context.Background(), ln)
+			})
+
+			require.Equal(t, maxRetries, updateCalls,
+				"update should be retried exactly CiliumNodeUpdateMaxRetries (%d) times before exiting", maxRetries)
+		})
+	}
 }
