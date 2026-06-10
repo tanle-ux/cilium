@@ -10,7 +10,10 @@ import (
 // Hive options
 const (
 	// HiveStartTimeout is the default value for option.HiveStartTimeout
-	HiveStartTimeout = 5 * time.Minute
+	// NOTE: temporarily very large for control-plane-outage testing so the
+	// agent does not abort start hooks (e.g. the API server cold-start wait)
+	// too soon. Revert to 5 * time.Minute before merging upstream.
+	HiveStartTimeout = 168 * time.Hour
 
 	// HiveStopTimeout is the default value for option.HiveStopTimeout
 	HiveStopTimeout = time.Minute

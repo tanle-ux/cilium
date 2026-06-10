@@ -9,6 +9,7 @@ import (
 
 	"github.com/cilium/cilium/pkg/defaults"
 	"github.com/cilium/cilium/pkg/endpoint/regeneration"
+	"github.com/cilium/cilium/pkg/time"
 )
 
 // The node discovery cell provides the local node configuration and node discovery
@@ -39,6 +40,12 @@ var defaultConfig = config{
 	IPAMMaxAllocate:  0,
 	IPAMStaticIPTags: map[string]string{},
 
+	// NOTE: temporarily very large for control-plane-outage testing so the
+	// agent keeps retrying instead of exiting. Revert to maxRetryCount (10)
+	// before merging upstream.
+	CiliumNodeUpdateMaxRetries:   1000000,
+	CiliumNodeUpdateRetryBackoff: backoffDuration,
+
 	ENIFirstInterfaceIndex:     defaults.ENIFirstInterfaceIndex,
 	ENISubnetIDs:               []string{},
 	ENISubnetTags:              map[string]string{},
@@ -63,6 +70,15 @@ type config struct {
 	IPAMMaxAllocate  int
 	IPAMStaticIPTags map[string]string
 
+	// CiliumNodeUpdateMaxRetries is the number of attempts the agent makes to
+	// create or update its own CiliumNode resource against the API server
+	// before giving up and exiting. A higher value lets the agent tolerate a
+	// longer control-plane / API server outage without crash-looping.
+	CiliumNodeUpdateMaxRetries int
+	// CiliumNodeUpdateRetryBackoff is the backoff between CiliumNode create or
+	// update retries against the API server.
+	CiliumNodeUpdateRetryBackoff time.Duration
+
 	ENIFirstInterfaceIndex     int
 	ENISubnetIDs               []string
 	ENISubnetTags              map[string]string
@@ -86,6 +102,9 @@ func (c config) Flags(flags *pflag.FlagSet) {
 	flags.Int("ipam-pre-allocate", c.IPAMPreAllocate, "Number of IP addresses that must be available for allocation in the IPAMspec at the node level")
 	flags.Int("ipam-max-allocate", c.IPAMMaxAllocate, "Maximum number of IPs that can be allocated at the node level")
 	flags.StringToString("ipam-static-ip-tags", c.IPAMStaticIPTags, "List of tags to determine the pool of IPs from which to attribute a static IP to the node at the node level, this currently works with AWS and Azure")
+
+	flags.Int("cilium-node-update-max-retries", c.CiliumNodeUpdateMaxRetries, "Number of attempts to create or update the CiliumNode resource against the API server before the agent gives up and exits. Increase to tolerate longer control-plane / API server outages without crash-looping")
+	flags.Duration("cilium-node-update-retry-backoff", c.CiliumNodeUpdateRetryBackoff, "Backoff duration between CiliumNode create/update retries against the API server")
 
 	flags.Int("eni-first-interface-index", c.ENIFirstInterfaceIndex, "Index of the first ENI to use for IP allocation at the node level")
 	flags.StringToString("eni-exclude-interface-tags", c.ENIExcludeInterfaceTags, "List of tags to use when excluding ENIs for Cilium IP allocation at the node level")

@@ -40,6 +40,14 @@ type SharedConfig struct {
 	// K8sHeartbeatTimeout configures the timeout for apiserver heartbeat
 	K8sHeartbeatTimeout time.Duration
 
+	// K8sClientConnectionRetryTimeout configures how long the agent keeps
+	// retrying to establish its initial connection to the API server at
+	// startup (cold start) before giving up and exiting. Increase to avoid
+	// terminating too soon during a control-plane / API server outage. The
+	// effective wait is min(this, --hive-start-timeout), so raise
+	// --hive-start-timeout as well for values above its default.
+	K8sClientConnectionRetryTimeout time.Duration
+
 	// EnableAPIDiscovery enables Kubernetes API discovery
 	EnableK8sAPIDiscovery bool
 }
@@ -69,7 +77,13 @@ var defaultSharedConfig = SharedConfig{
 	K8sClientConnectionTimeout:   30 * time.Second,
 	K8sClientConnectionKeepAlive: 30 * time.Second,
 	K8sHeartbeatTimeout:          30 * time.Second,
-	EnableK8sAPIDiscovery:        defaults.K8sEnableAPIDiscovery,
+	// NOTE: temporarily very large for control-plane-outage testing so the
+	// agent does not terminate at cold start when the API server is
+	// unreachable. Revert to 1 minute (the previous hardcoded connTimeout)
+	// before merging upstream. The default HiveStartTimeout is raised to
+	// match so this is not capped at start-hook timeout.
+	K8sClientConnectionRetryTimeout: 168 * time.Hour,
+	EnableK8sAPIDiscovery:           defaults.K8sEnableAPIDiscovery,
 }
 
 func (def SharedConfig) Flags(flags *pflag.FlagSet) {
@@ -79,6 +93,7 @@ func (def SharedConfig) Flags(flags *pflag.FlagSet) {
 	flags.Duration(option.K8sClientConnectionTimeout, def.K8sClientConnectionTimeout, "Configures the timeout of K8s client connections. K8s client is disabled if the value is set to 0")
 	flags.Duration(option.K8sClientConnectionKeepAlive, def.K8sClientConnectionKeepAlive, "Configures the keep alive duration of K8s client connections. K8 client is disabled if the value is set to 0")
 	flags.Duration(option.K8sHeartbeatTimeout, def.K8sHeartbeatTimeout, "Configures the timeout for api-server heartbeat, set to 0 to disable")
+	flags.Duration("k8s-client-connection-retry-timeout", def.K8sClientConnectionRetryTimeout, "Maximum time the agent keeps retrying its initial API server connection at startup before exiting. Increase to avoid terminating too soon during a control-plane / API server outage. Effective wait is min(this, --hive-start-timeout). A non-positive value falls back to the built-in default")
 	flags.Bool(option.K8sEnableAPIDiscovery, def.EnableK8sAPIDiscovery, "Enable discovery of Kubernetes API groups and resources with the discovery API")
 }
 

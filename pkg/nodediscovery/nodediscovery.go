@@ -227,10 +227,22 @@ func (n *NodeDiscovery) updateCiliumNodeResource(ctx context.Context, ln *node.L
 		logfields.Node, nodeTypes.GetName(),
 	)
 
+	// Retry count and backoff are configurable so the agent can tolerate a
+	// longer control-plane / API server outage before giving up and exiting.
+	// Fall back to the package defaults if unset (e.g. zero-valued config).
+	maxRetries := n.config.CiliumNodeUpdateMaxRetries
+	if maxRetries <= 0 {
+		maxRetries = maxRetryCount
+	}
+	retryBackoff := n.config.CiliumNodeUpdateRetryBackoff
+	if retryBackoff <= 0 {
+		retryBackoff = backoffDuration
+	}
+
 	performGet := true
 	var nodeResource *ciliumv2.CiliumNode
 	var lastErr error
-	for retryCount := range maxRetryCount {
+	for retryCount := range maxRetries {
 		performUpdate := true
 		if performGet {
 			var err error
@@ -271,7 +283,7 @@ func (n *NodeDiscovery) updateCiliumNodeResource(ctx context.Context, ln *node.L
 				lastErr = err
 				n.logger.Info("Unable to update CiliumNode resource, will retry", logfields.Error, err)
 				// Backoff before retrying
-				time.Sleep(backoffDuration)
+				time.Sleep(retryBackoff)
 				continue
 			} else {
 				return
@@ -281,7 +293,7 @@ func (n *NodeDiscovery) updateCiliumNodeResource(ctx context.Context, ln *node.L
 				lastErr = err
 				n.logger.Info("Unable to create CiliumNode resource, will retry", logfields.Error, err)
 				// Backoff before retrying
-				time.Sleep(backoffDuration)
+				time.Sleep(retryBackoff)
 				continue
 			} else {
 				n.logger.Info("Successfully created CiliumNode resource")
@@ -289,7 +301,7 @@ func (n *NodeDiscovery) updateCiliumNodeResource(ctx context.Context, ln *node.L
 			}
 		}
 	}
-	logging.Fatal(n.logger, "Could not create or update CiliumNode resource", logfields.Error, lastErr, logfields.Retries, maxRetryCount)
+	logging.Fatal(n.logger, "Could not create or update CiliumNode resource", logfields.Error, lastErr, logfields.Retries, maxRetries)
 }
 
 func (n *NodeDiscovery) mutateNodeResource(ctx context.Context, nodeResource *ciliumv2.CiliumNode, ln *node.LocalNode) error {
